@@ -19,6 +19,7 @@ class TestGeo2dTree(unittest.TestCase):
 
     def test_build_tree(self):
         tree = Geo2dTree(self.make_points())
+        self.assertEqual(6, len(tree))
         root = tree.root
         self.assertLatLon(root, 2, 7)
 

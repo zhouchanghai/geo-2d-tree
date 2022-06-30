@@ -1,6 +1,8 @@
-import math, operator, heapq
+import math, operator, heapq, logging
 
 __all__ = ('distance', 'Geo2dTree')
+
+logger = logging.getLogger(__name__)
 
 def _distance(lat1, lon1, lat2, lon2):
     R = 6371000
@@ -40,6 +42,8 @@ class _Node:
         self.loc = location
         self.left = None
         self.right = None
+        # size of the subtree rooted at this node
+        self.size = 1
 
     def coordinate(self, axis: int):
         # Longitude first
@@ -57,6 +61,10 @@ class _Node:
     @property
     def lon(self):
         return self.loc.lon
+        
+    def __str__(self):
+        return "(lat: {}, lon: {}, size: {})".format(
+        self.lat, self.lon, self.size)
 
 class Geo2dTree:
     '''A 2-dimensional k-d tree divided by longitude and latitude.
@@ -70,22 +78,25 @@ class Geo2dTree:
         '''Build the tree from a list of locations where 
         each location has lat and lon attributes.
         '''
-        self.nodes = [_Node(loc) for loc in locations]
-        sortedByLat = self.nodes
-        sortedByLon = list(self.nodes)
+        nodes = [_Node(loc) for loc in locations]
+        sortedByLat = nodes
+        sortedByLon = list(nodes)
         sortedByLat.sort(key = operator.attrgetter('lat'))
         sortedByLon.sort(key = operator.attrgetter('lon'))
         # First split is along meridian to handle 180 degree meridian wrap.
         self.root = self._build_tree(sortedByLon, sortedByLat)
 
     def __len__(self):
-        return len(self.nodes)
+        return self.root.size
 
     def nearest_neighbors(self, query, max_dist = math.inf, max_size = 1):
         '''Returns an unsorted list of (distance, location) of the nearest
         neighbors in the tree for the given query. The query argument must 
         have lat and lon attributes. The distances are in meters.
         '''
+        self._debug_nodes_checked = 0
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("query nearest neighbors for ({}, {})".format(query.lat, query.lon))
         results = []
         query = _Node(query)
         self._find_nearest(self.root, query, 0, results, max_dist, max_size)
@@ -106,6 +117,7 @@ class Geo2dTree:
         n = len(sortedByMainAxis)
         midIndex = n // 2
         midNode = sortedByMainAxis[midIndex]
+        midNode.size = n
         leftByMain = sortedByMainAxis[ : midIndex]
         rightByMain = sortedByMainAxis[midIndex + 1 : ]
 
@@ -126,7 +138,8 @@ class Geo2dTree:
     def _find_nearest(self, root, query, depth, results, max_dist, max_size):
         if not root:
             return
-            
+        
+        # the leaf node
         if not root.left and not root.right:
             self._update_nearest(query, root, results, max_dist, max_size)
             return
@@ -140,10 +153,13 @@ class Geo2dTree:
         else:
             nearerTree = root.right
             fartherTree = root.left
-            
+        
         self._find_nearest(nearerTree, query, depth + 1, results, max_dist, max_size)
         self._update_nearest(query, root, results, max_dist, max_size)
-        
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("depth {} root {} nearer tree {} is done, results {}".format(
+            depth, root, nearerTree, results))
+
         if axis == 0:
             # Splitted by meridian. Find the distance to
             # the other half plane along the parallel.
@@ -160,9 +176,13 @@ class Geo2dTree:
         if (distToFartherTree < max_dist and 
             (len(results) < max_size or distToFartherTree < -results[0][0])):
             self._find_nearest(fartherTree, query, depth + 1, results, max_dist, max_size)
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("depth {} root {} farther tree {} is done, results {}".format(
+                depth, root, fartherTree, results))
 
     def _update_nearest(self, query, candidate, results, max_dist, max_size):
         d = distance(query, candidate)
+        self._debug_nodes_checked += 1
         if d > max_dist:
             return
 
